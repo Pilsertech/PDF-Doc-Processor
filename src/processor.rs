@@ -49,7 +49,7 @@ pub fn process_pair(
     info!("  [1/4] Rendering and splitting PDF A...");
     let split_a = render_and_split(file_a, config.dpi, pdfium)?;
     info!("  [1/4] ✓ PDF A rendered");
-    
+
     info!("  [2/4] Rendering and splitting PDF B...");
     let split_b = render_and_split(file_b, config.dpi, pdfium)?;
     info!("  [2/4] ✓ PDF B rendered");
@@ -60,9 +60,9 @@ pub fn process_pair(
     let resolve = |slot: &str| -> DynamicImage {
         match slot {
             "A_right" => split_a.right.clone(),
-            "A_left"  => split_a.left.clone(),
+            "A_left" => split_a.left.clone(),
             "B_right" => split_b.right.clone(),
-            "B_left"  => split_b.left.clone(),
+            "B_left" => split_b.left.clone(),
             other => {
                 tracing::warn!("Unknown page_order slot '{}', defaulting to A_right", other);
                 split_a.right.clone()
@@ -72,8 +72,10 @@ pub fn process_pair(
 
     info!(
         "  Page order: page1={} page2={} page3={} page4={}",
-        config.page_order.page1, config.page_order.page2,
-        config.page_order.page3, config.page_order.page4,
+        config.page_order.page1,
+        config.page_order.page2,
+        config.page_order.page3,
+        config.page_order.page4,
     );
 
     let page1 = resolve(&config.page_order.page1);
@@ -89,41 +91,41 @@ pub fn process_pair(
             num
         }
         Err(e) => {
-            // Fallback: use file counter to avoid losing documents
             let fallback = fallback_filename(file_a);
             warn!("  [3/4] ⚠ OCR failed: {}", e);
             warn!("  [3/4]    Cause may be:");
             warn!("  [3/4]    1. TESSDATA_PREFIX not pointing to tessdata folder (check log above for 'TESSDATA_PREFIX =')");
             warn!("  [3/4]    2. ROI coordinates are off — the number isn't in the cropped strip");
-            warn!("  [3/4]    3. eng.traineddata not installed: sudo apt install tesseract-ocr-eng");
-            warn!("  [3/4]    Page 1 dimensions: {}×{} px", page1.width(), page1.height());
-            warn!("  [3/4]    ROI config: y=[{:.1}%–{:.1}%]  x=[{:.1}%–{:.1}%]",
-                config.roi.y_start_frac * 100.0, config.roi.y_end_frac * 100.0,
-                config.roi.x_start_frac * 100.0, config.roi.x_end_frac * 100.0,
+            warn!(
+                "  [3/4]    3. eng.traineddata not installed: sudo apt install tesseract-ocr-eng"
             );
-            // Always save a debug ROI image on OCR failure so you can inspect what
-            // Tesseract actually saw — even if debug_roi is false in config.
-            {
-                use crate::ocr::{crop_roi, preprocess_for_ocr};
-                let roi_pixels = config.roi.to_pixels(page1.width(), page1.height());
-                warn!("  [3/4]    ROI pixels: x=[{}–{}]  y=[{}–{}]  ({}×{}px)",
-                    roi_pixels.x1, roi_pixels.x2, roi_pixels.y1, roi_pixels.y2,
-                    roi_pixels.width(), roi_pixels.height(),
-                );
-                let roi_img = crop_roi(&page1, &roi_pixels);
-                let binary = preprocess_for_ocr(&roi_img);
-                let debug_path = config.output_dir.join(format!(
-                    "_debug_roi_FAILED_{}.png", fallback
-                ));
-                match binary.save(&debug_path) {
-                    Ok(_) => warn!("  [3/4]    ↳ Saved ROI debug image: {} — inspect to check ROI alignment", debug_path.display()),
-                    Err(save_err) => warn!("  [3/4]    ↳ Could not save ROI debug image: {}", save_err),
-                }
-            }
+            warn!(
+                "  [3/4]    Page 1 dimensions: {}×{} px",
+                page1.width(),
+                page1.height()
+            );
+            warn!(
+                "  [3/4]    ROI config: y=[{:.1}%–{:.1}%]  x=[{:.1}%–{:.1}%]",
+                config.roi.y_start_frac * 100.0,
+                config.roi.y_end_frac * 100.0,
+                config.roi.x_start_frac * 100.0,
+                config.roi.x_end_frac * 100.0,
+            );
             warn!("  [3/4] ⚠ Using fallback name: {}", fallback);
             fallback
         }
     };
+
+    // Save ROI image
+    {
+        use crate::ocr::crop_roi;
+        let roi_pixels = config.roi.to_pixels(page1.width(), page1.height());
+        let roi_img = crop_roi(&page1, &roi_pixels);
+        let roi_path = config.output_dir.join(format!("{}.png", student_number));
+        if let Err(e) = roi_img.save(&roi_path) {
+            warn!("  [3/4]    ↳ Could not save ROI PNG: {}", e);
+        }
+    }
 
     // Step 3: Assemble the 4 pages into one output PDF
     info!("  [4/4] Assembling output PDF...");
@@ -276,18 +278,15 @@ fn encode_jpeg(img: &DynamicImage, quality: u8) -> anyhow::Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-/// Produce a fallback filename from the file_A counter when OCR fails.
-/// Format: UNKNOWN_004883 — ensures no documents are silently lost.
 fn fallback_filename(file_a: &Path) -> String {
     let name = file_a
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    // Extract the 6-digit counter portion if possible
     if name.len() >= 9 {
-        format!("UNKNOWN_{}", &name[3..9])
+        name[3..9].to_string()
     } else {
-        format!("UNKNOWN_{}", name)
+        name.to_string()
     }
 }
