@@ -1,6 +1,7 @@
-use image::{DynamicImage, GrayImage, ImageBuffer, Luma};
+use image::{DynamicImage, GrayImage, ImageBuffer, ImageEncoder, Luma};
 use leptess::LepTess;
 use regex::Regex;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::OnceLock;
 use tracing::{debug, warn};
@@ -140,30 +141,45 @@ pub fn extract_application_number(
 ///   - PSM 6: Assume a uniform block of text (best for a header region)
 ///   - Whitelist: digits only to reduce false positives
 fn run_tesseract(img: &GrayImage, tessdata_path: &Path) -> Result<String, ProcessorError> {
-    let tessdata_str = tessdata_path
+    let datapath_str = tessdata_path
         .to_str()
         .ok_or_else(|| ProcessorError::OcrInitError("tessdata path is not valid UTF-8".into()))?;
 
-    let mut tess = LepTess::new(Some(tessdata_str), "eng")
-        .map_err(|e| ProcessorError::OcrInitError(format!("{e}")))?;
+    let mut tess = LepTess::new(Some(datapath_str), "eng").map_err(|e| {
+        ProcessorError::OcrInitError(format!(
+            "{e} — tried: '{}' (from config: '{}')",
+            datapath_str,
+            tessdata_path.display()
+        ))
+    })?;
 
-    // PSM 6 = Assume a single uniform block of text
-    tess.set_variable(leptess::Variable::TesseditPagesegMode, "6")
+    // PSM 7 = Treat image as a single text line — better than PSM 6 for a single
+    // number sitting on one line (PSM 6 was treating it as a block, causing misreads)
+    tess.set_variable(leptess::Variable::TesseditPagesegMode, "7")
         .map_err(|e| ProcessorError::OcrProcessError(format!("set PSM: {e}")))?;
 
-    // Restrict to digits + punctuation that might appear near numbers
-    // This dramatically reduces misreads like 'O' for '0', 'l' for '1' etc.
-    tess.set_variable(
-        leptess::Variable::TesseditCharWhitelist,
-        "0123456789STUDENAPPLIOCATIO. :",
-    )
-    .map_err(|e| ProcessorError::OcrProcessError(format!("set whitelist: {e}")))?;
+    // Whitelist: DIGITS ONLY. The number is the only thing we need — every extra
+    // character in the whitelist gives Tesseract more chances to misread a digit.
+    // Previously "STUDENAPPLIOCATIO. :" was included, causing '2'→'8', '1'→'4' etc.
+    tess.set_variable(leptess::Variable::TesseditCharWhitelist, "0123456789")
+        .map_err(|e| ProcessorError::OcrProcessError(format!("set whitelist: {e}")))?;
 
-    // Feed the image as raw bytes
-    let (w, h) = img.dimensions();
-    let raw_bytes = img.as_raw();
+    // Feed the image as a PNG buffer — set_image_from_mem needs an encoded image
+    // (PNG/TIFF/etc.), NOT raw pixel bytes. Passing as_raw() caused silent failures.
+    let png_bytes = {
+        let mut buf = Cursor::new(Vec::new());
+        image::codecs::png::PngEncoder::new(&mut buf)
+            .write_image(
+                img.as_raw(),
+                img.width(),
+                img.height(),
+                image::ExtendedColorType::L8,
+            )
+            .map_err(|e| ProcessorError::OcrProcessError(format!("PNG encode for OCR: {e}")))?;
+        buf.into_inner()
+    };
 
-    tess.set_image_from_mem(raw_bytes)
+    tess.set_image_from_mem(&png_bytes)
         .map_err(|e| ProcessorError::OcrProcessError(format!("set image: {e}")))?;
 
     tess.set_source_resolution(600); // 300 DPI × 2 from our upscaling

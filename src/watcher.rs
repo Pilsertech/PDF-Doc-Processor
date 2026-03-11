@@ -181,10 +181,12 @@ fn scan_and_process_existing(config: &Arc<Config>, pending: &PendingMap) {
                 thread::spawn(move || {
                     info!("⏳ Startup pair ({}, {}) - beginning processing...", counter_a, counter_b);
                     
-                    // Set TESSDATA_PREFIX for Tesseract OCR to find training data
-                    let tessdata_dir = config_clone.tessdata_path.parent()
-                        .unwrap_or_else(|| std::path::Path::new("/usr/share/tessdata"));
-                    std::env::set_var("TESSDATA_PREFIX", tessdata_dir.to_string_lossy().as_ref());
+                    // Set TESSDATA_PREFIX to the tessdata directory itself.
+                    // config.tessdata_path already points to the tessdata folder
+                    // (e.g. /usr/share/tessdata), so use it directly — NOT .parent(),
+                    // which would give /usr/share and cause "eng.traineddata not found".
+                    std::env::set_var("TESSDATA_PREFIX", config_clone.tessdata_path.to_string_lossy().as_ref());
+                    info!("  [Init] TESSDATA_PREFIX = {}", config_clone.tessdata_path.display());
                     
                     info!("  [Init] Loading PDFium library...");
                     
@@ -249,18 +251,21 @@ pub fn run_daemon(config: Config) -> anyhow::Result<()> {
 
     // Start the notify watcher
     let watch_dir = config.watch_dir.clone();
-    let mut watcher = start_watcher(watch_dir, tx)?;
+    // Bind to _watcher — the leading underscore is intentional.
+    // The notify watcher stops delivering events as soon as it is dropped,
+    // so we must keep it alive for the entire daemon lifetime.
+    // `run_event_loop` blocks forever, so a plain `drop(watcher)` after it
+    // would never execute, leaving the watcher alive only by accident.
+    // Naming it `_watcher` makes the intent explicit and silences the compiler.
+    let _watcher = start_watcher(watch_dir, tx)?;
 
     // Scan for existing files and process any complete pairs
     scan_and_process_existing(&config, &pending);
 
     info!("Daemon running. Press Ctrl-C to stop.");
 
-    // Process events from the channel
+    // Process events from the channel (blocks until channel is closed)
     run_event_loop(rx, pending, config);
-
-    // Keep watcher alive (it would stop if dropped)
-    drop(watcher);
     Ok(())
 }
 
@@ -324,29 +329,35 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
             let mut pending_map = pending.lock().unwrap();
             let processed = processed_pairs.lock().unwrap();
 
-            // Try to find a partner: look for counter-1 OR counter+1
-            let (partner_counter, file_a, file_b, check_counter) = 
-                // Check if counter-1 exists in pending (we'd be file_B)
-                if let Some(partner_path) = pending_map.remove(&(counter - 1)) {
-                    (Some(counter - 1), partner_path, path.clone(), counter)
-                }
-                // Check if counter+1 exists in pending (we'd be file_A)
-                else if let Some(partner_path) = pending_map.remove(&(counter + 1)) {
-                    (Some(counter + 1), path.clone(), partner_path, counter + 1)
-                }
-                // No partner found
-                else {
-                    (None, PathBuf::new(), PathBuf::new(), counter)
+            // Try to find a partner: look for counter-1 OR counter+1.
+            // IMPORTANT: use checked subtraction — counter is u32 and could be 0,
+            // causing a panic (debug) or wrap-around (release) without the guard.
+            let partner_result: Option<(u32, PathBuf, PathBuf)> =
+                if counter > 0 {
+                    if let Some(partner_path) = pending_map.remove(&(counter - 1)) {
+                        // Current file has the HIGHER counter → it is file_B; partner is file_A
+                        Some((counter - 1, partner_path, path.clone()))
+                    } else if let Some(partner_path) = pending_map.remove(&(counter + 1)) {
+                        // Current file has the LOWER counter → it is file_A; partner is file_B
+                        Some((counter + 1, path.clone(), partner_path))
+                    } else {
+                        None
+                    }
+                } else {
+                    // counter == 0: can only have a partner at counter+1
+                    pending_map.remove(&(counter + 1))
+                        .map(|partner_path| (counter + 1, path.clone(), partner_path))
                 };
 
-            match partner_counter {
-                Some(partner) => {
+            match partner_result {
+                Some((partner, file_a, file_b)) => {
+                    // pair_key is always (lower, higher)
                     let pair_key = if counter < partner {
                         (counter, partner)
                     } else {
                         (partner, counter)
                     };
-                    
+
                     if processed.contains(&pair_key) {
                         info!(
                             "Watcher: pair ({}, {}) already processed, ignoring - {} + {}",
@@ -390,10 +401,11 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
             thread::spawn(move || {
                 info!("⏳ Watcher pair ({}, {}) - beginning processing...", counter_a, counter_b);
                 
-                // Set TESSDATA_PREFIX for Tesseract OCR to find training data
-                let tessdata_dir = config.tessdata_path.parent()
-                    .unwrap_or_else(|| std::path::Path::new("/usr/share/tessdata"));
-                std::env::set_var("TESSDATA_PREFIX", tessdata_dir.to_string_lossy().as_ref());
+                // Set TESSDATA_PREFIX to the tessdata directory itself.
+                // config.tessdata_path already points to the tessdata folder
+                // (e.g. /usr/share/tessdata), so use it directly — NOT .parent().
+                std::env::set_var("TESSDATA_PREFIX", config.tessdata_path.to_string_lossy().as_ref());
+                info!("  [Init] TESSDATA_PREFIX = {}", config.tessdata_path.display());
                 
                 info!("  [Init] Loading PDFium library...");
                 

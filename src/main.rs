@@ -22,6 +22,8 @@ struct ConfigToml {
     debug: DebugConfig,
     #[serde(default)]
     environment: EnvironmentConfig,
+    #[serde(default)]
+    page_order: PageOrderToml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +54,34 @@ struct RoiConfigToml {
 #[derive(Debug, Deserialize)]
 struct DebugConfig {
     debug_roi: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PageOrderToml {
+    #[serde(default = "default_a_right")]
+    page1: String,
+    #[serde(default = "default_b_right")]
+    page2: String,
+    #[serde(default = "default_b_left")]
+    page3: String,
+    #[serde(default = "default_a_left")]
+    page4: String,
+}
+
+fn default_a_right() -> String { "A_right".into() }
+fn default_b_right() -> String { "B_right".into() }
+fn default_b_left()  -> String { "B_left".into() }
+fn default_a_left()  -> String { "A_left".into() }
+
+impl Default for PageOrderToml {
+    fn default() -> Self {
+        Self {
+            page1: default_a_right(),
+            page2: default_b_right(),
+            page3: default_b_left(),
+            page4: default_a_left(),
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -134,6 +164,12 @@ fn main() -> anyhow::Result<()> {
             y_end_frac: toml.roi.y_end,
         },
         debug_roi: toml.debug.debug_roi,
+        page_order: crate::config::PageOrderConfig {
+            page1: toml.page_order.page1,
+            page2: toml.page_order.page2,
+            page3: toml.page_order.page3,
+            page4: toml.page_order.page4,
+        },
     };
 
     info!("Scanner Processor starting...");

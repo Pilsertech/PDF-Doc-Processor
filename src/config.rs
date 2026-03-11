@@ -46,6 +46,36 @@ impl RoiPixels {
     }
 }
 
+/// Which half of which scan file maps to each output page.
+///
+/// Values must be one of: "A_right", "A_left", "B_right", "B_left"
+/// Adjust in config.toml under [page_order] to fix wrong page ordering
+/// without recompiling.
+///
+/// Default (standard duplex scanner layout):
+///   page1 = "A_right"   <- APPLICATION NO. is here, OCR runs on this page
+///   page2 = "B_right"
+///   page3 = "B_left"
+///   page4 = "A_left"
+#[derive(Debug, Clone)]
+pub struct PageOrderConfig {
+    pub page1: String,
+    pub page2: String,
+    pub page3: String,
+    pub page4: String,
+}
+
+impl Default for PageOrderConfig {
+    fn default() -> Self {
+        Self {
+            page1: "A_right".into(),
+            page2: "B_right".into(),
+            page3: "B_left".into(),
+            page4: "A_left".into(),
+        }
+    }
+}
+
 /// Top-level application configuration
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -69,6 +99,9 @@ pub struct Config {
 
     /// Whether to save ROI debug images alongside output
     pub debug_roi: bool,
+
+    /// Page order — controls which A3 half goes to which output page
+    pub page_order: PageOrderConfig,
 }
 
 impl Default for RoiConfig {

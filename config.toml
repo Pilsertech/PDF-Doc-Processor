@@ -2,19 +2,42 @@
 watch_dir = "./input"
 output_dir = "./output"
 dpi = 300
-tessdata = "/usr/share/tessdata"
+tessdata = "/usr/share/tesseract-ocr/5/tessdata"
 pdfium_lib = "/home/pilser/Nyunga-Foundation-Data-Processing/Rust-Intergration/Docs/libpdfium.so"
 library_path = "/home/pilser/Nyunga-Foundation-Data-Processing/PDF-Doc-Processor/Docs"
 
 [environment]
 # Environment variables to set before running
-TESSDATA_PREFIX = "/usr/share/tessdata"
+TESSDATA_PREFIX = "/usr/share/tesseract-ocr/5/tessdata"
 
 [roi]
-y_start = 0.155
-y_end = 0.235
-x_start = 0.08
-x_end = 0.92
-
+y_start = 0.295
+y_end   = 0.360
+x_start = 0.241
+x_end   = 0.598
 [debug]
-debug_roi = false
+debug_roi = true
+
+
+# Page order — controls which A3 half becomes which output page.
+# Each value must be one of: A_right, A_left, B_right, B_left
+#
+# How to find your correct order:
+#   1. Run the processor on a test pair
+#   2. Open the output PDF and check which pages are out of order
+#   3. Swap the relevant entries below and rerun — no recompile needed
+#
+# Standard layout (correct for most scanners):
+#   page1 = "A_right"   <- form front with APPLICATION NO. (OCR runs here)
+#   page2 = "B_right"
+#   page3 = "B_left"
+#   page4 = "A_left"    <- declaration / back page
+#
+# If your output is 1,3,2,4 swap page2 and page3:
+#   page2 = "B_left"
+#   page3 = "B_right"
+[page_order]
+page1 = "A_right"
+page2 = "B_left"
+page3 = "B_right"
+page4 = "A_left"
