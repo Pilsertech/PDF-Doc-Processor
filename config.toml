@@ -1,0 +1,20 @@
+[general]
+watch_dir = "./input"
+output_dir = "./output"
+dpi = 300
+tessdata = "/usr/share/tessdata"
+pdfium_lib = "/home/pilser/Nyunga-Foundation-Data-Processing/Rust-Intergration/Docs/libpdfium.so"
+library_path = "/home/pilser/Nyunga-Foundation-Data-Processing/PDF-Doc-Processor/Docs"
+
+[environment]
+# Environment variables to set before running
+TESSDATA_PREFIX = "/usr/share/tessdata"
+
+[roi]
+y_start = 0.155
+y_end = 0.235
+x_start = 0.08
+x_end = 0.92
+
+[debug]
+debug_roi = false

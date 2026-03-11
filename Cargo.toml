@@ -1,0 +1,53 @@
+[package]
+name = "scanner_processor"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "scanner_processor"
+path = "src/main.rs"
+
+[dependencies]
+# PDF rendering → images (PDFium bindings — best PyMuPDF equivalent)
+pdfium-render = { version = "0.8", features = ["image"] }
+
+# Image processing: crop, split, resize, save
+image = "0.25"
+
+# OCR via Tesseract bindings
+leptess = "0.14"
+
+# File watching (better than Python watchdog)
+notify = { version = "6", features = ["macos_fsevent"] }
+
+# PDF assembly output (write multi-page PDFs)
+lopdf = "0.34"
+
+# Regex for student number extraction
+regex = "1"
+
+# Async runtime + threading
+tokio = { version = "1", features = ["full"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Channel for watchdog → processor communication
+crossbeam-channel = "0.5"
+
+# Config file parsing
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
