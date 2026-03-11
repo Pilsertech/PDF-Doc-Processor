@@ -6,6 +6,11 @@ tessdata = "/usr/share/tesseract-ocr/5/tessdata"
 pdfium_lib = "/home/pilser/Nyunga-Foundation-Data-Processing/Rust-Intergration/Docs/libpdfium.so"
 library_path = "/home/pilser/Nyunga-Foundation-Data-Processing/PDF-Doc-Processor/Docs"
 
+# JPEG compression quality for output PDFs (0-100, lower = smaller file)
+# Recommended: 60-80 for smaller files, 90 for high quality
+jpeg_quality = 70
+
+
 [environment]
 # Environment variables to set before running
 TESSDATA_PREFIX = "/usr/share/tesseract-ocr/5/tessdata"
@@ -13,8 +18,8 @@ TESSDATA_PREFIX = "/usr/share/tesseract-ocr/5/tessdata"
 [roi]
 y_start = 0.295
 y_end   = 0.360
-x_start = 0.241
-x_end   = 0.598
+x_start = 0.240
+x_end   = 0.700
 [debug]
 debug_roi = true
 

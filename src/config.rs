@@ -102,6 +102,9 @@ pub struct Config {
 
     /// Page order — controls which A3 half goes to which output page
     pub page_order: PageOrderConfig,
+
+    /// JPEG compression quality (0-100) for output PDFs
+    pub jpeg_quality: u8,
 }
 
 impl Default for RoiConfig {

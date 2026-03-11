@@ -131,7 +131,12 @@ pub fn process_pair(
     info!("  [4/4] Assembling output PDF...");
     let output_path = config.output_dir.join(format!("{}.pdf", student_number));
 
-    assemble_pdf(&[&page1, &page2, &page3, &page4], &output_path, config.dpi)?;
+    assemble_pdf(
+        &[&page1, &page2, &page3, &page4],
+        &output_path,
+        config.dpi,
+        config.jpeg_quality,
+    )?;
 
     info!("  [4/4] ✓ Output: {}", output_path.display());
 
@@ -156,6 +161,7 @@ fn assemble_pdf(
     pages: &[&DynamicImage],
     output_path: &Path,
     dpi: u32,
+    jpeg_quality: u8,
 ) -> Result<(), ProcessorError> {
     let mut doc = Document::with_version("1.5");
 
@@ -172,7 +178,7 @@ fn assemble_pdf(
         let height_pt = height as f64 * 72.0 / dpi as f64;
 
         // Encode image as JPEG into memory buffer
-        let jpeg_bytes = encode_jpeg(img, 90).map_err(|e| {
+        let jpeg_bytes = encode_jpeg(img, jpeg_quality).map_err(|e| {
             ProcessorError::PdfAssemblyError(format!("JPEG encode page {}: {e}", i + 1))
         })?;
 

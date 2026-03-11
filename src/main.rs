@@ -33,8 +33,14 @@ struct GeneralConfig {
     dpi: u32,
     tessdata: PathBuf,
     pdfium_lib: PathBuf,
+    #[serde(default = "default_jpeg_quality")]
+    jpeg_quality: u8,
     #[serde(default)]
     library_path: Option<String>,
+}
+
+fn default_jpeg_quality() -> u8 {
+    70
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -68,10 +74,18 @@ struct PageOrderToml {
     page4: String,
 }
 
-fn default_a_right() -> String { "A_right".into() }
-fn default_b_right() -> String { "B_right".into() }
-fn default_b_left()  -> String { "B_left".into() }
-fn default_a_left()  -> String { "A_left".into() }
+fn default_a_right() -> String {
+    "A_right".into()
+}
+fn default_b_right() -> String {
+    "B_right".into()
+}
+fn default_b_left() -> String {
+    "B_left".into()
+}
+fn default_a_left() -> String {
+    "A_left".into()
+}
 
 impl Default for PageOrderToml {
     fn default() -> Self {
@@ -130,7 +144,9 @@ fn main() -> anyhow::Result<()> {
             library_path_buf
         } else {
             let exe_path = std::env::current_exe()?;
-            let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let exe_dir = exe_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
             exe_dir.join(&library_path_buf)
         };
         if library_dir.exists() {
@@ -157,6 +173,7 @@ fn main() -> anyhow::Result<()> {
         dpi: toml.general.dpi,
         tessdata_path: toml.general.tessdata,
         pdfium_lib_path: toml.general.pdfium_lib,
+        jpeg_quality: toml.general.jpeg_quality,
         roi: crate::config::RoiConfig {
             x_start_frac: toml.roi.x_start,
             x_end_frac: toml.roi.x_end,
