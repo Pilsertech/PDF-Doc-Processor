@@ -53,10 +53,10 @@ impl RoiPixels {
 /// without recompiling.
 ///
 /// Default (standard duplex scanner layout):
-///   page1 = "A_right"   <- APPLICATION NO. is here, OCR runs on this page
+///   page1 = "A_right"   <- form front page
 ///   page2 = "B_right"
 ///   page3 = "B_left"
-///   page4 = "A_left"
+///   page4 = "A_left"    <- declaration / back page
 #[derive(Debug, Clone)]
 pub struct PageOrderConfig {
     pub page1: String,
@@ -88,17 +88,11 @@ pub struct Config {
     /// DPI for rendering PDF pages to images
     pub dpi: u32,
 
-    /// Path to Tesseract tessdata directory
-    pub tessdata_path: PathBuf,
-
     /// Path to the PDFium shared library binary
     pub pdfium_lib_path: PathBuf,
 
-    /// OCR region of interest configuration
+    /// Region of interest for screenshot extraction
     pub roi: RoiConfig,
-
-    /// Whether to save ROI debug images alongside output
-    pub debug_roi: bool,
 
     /// Page order — controls which A3 half goes to which output page
     pub page_order: PageOrderConfig,

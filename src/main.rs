@@ -1,6 +1,5 @@
 mod config;
 mod error;
-mod ocr;
 mod processor;
 mod splitter;
 mod utils;
@@ -19,9 +18,6 @@ use serde::Deserialize;
 struct ConfigToml {
     general: GeneralConfig,
     roi: RoiConfigToml,
-    debug: DebugConfig,
-    #[serde(default)]
-    environment: EnvironmentConfig,
     #[serde(default)]
     page_order: PageOrderToml,
 }
@@ -31,7 +27,6 @@ struct GeneralConfig {
     watch_dir: PathBuf,
     output_dir: PathBuf,
     dpi: u32,
-    tessdata: PathBuf,
     pdfium_lib: PathBuf,
     #[serde(default = "default_jpeg_quality")]
     jpeg_quality: u8,
@@ -43,23 +38,12 @@ fn default_jpeg_quality() -> u8 {
     70
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct EnvironmentConfig {
-    #[serde(default)]
-    tessdata_prefix: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 struct RoiConfigToml {
     y_start: f32,
     y_end: f32,
     x_start: f32,
     x_end: f32,
-}
-
-#[derive(Debug, Deserialize)]
-struct DebugConfig {
-    debug_roi: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,12 +116,6 @@ fn main() -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(&config_path)?;
     let toml: ConfigToml = toml::from_str(&config_content)?;
 
-    // Set TESSDATA_PREFIX for Tesseract
-    if let Some(tessdata_prefix) = &toml.environment.tessdata_prefix {
-        std::env::set_var("TESSDATA_PREFIX", tessdata_prefix);
-        info!("Set TESSDATA_PREFIX to: {}", tessdata_prefix);
-    }
-
     if let Some(library_path) = &toml.general.library_path {
         let library_path_buf = PathBuf::from(library_path);
         let library_dir = if library_path_buf.is_absolute() {
@@ -171,7 +149,6 @@ fn main() -> anyhow::Result<()> {
         watch_dir,
         output_dir,
         dpi: toml.general.dpi,
-        tessdata_path: toml.general.tessdata,
         pdfium_lib_path: toml.general.pdfium_lib,
         jpeg_quality: toml.general.jpeg_quality,
         roi: crate::config::RoiConfig {
@@ -180,7 +157,6 @@ fn main() -> anyhow::Result<()> {
             y_start_frac: toml.roi.y_start,
             y_end_frac: toml.roi.y_end,
         },
-        debug_roi: toml.debug.debug_roi,
         page_order: crate::config::PageOrderConfig {
             page1: toml.page_order.page1,
             page2: toml.page_order.page2,

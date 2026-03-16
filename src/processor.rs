@@ -8,13 +8,12 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::error::ProcessorError;
-use crate::ocr::extract_application_number;
 use crate::splitter::render_and_split;
 
 /// The result of processing one pair of scan files
 pub struct ProcessResult {
     pub output_path: PathBuf,
-    pub student_number: String,
+    pub output_name: String,
     pub file_a: PathBuf,
     pub file_b: PathBuf,
 }
@@ -83,53 +82,14 @@ pub fn process_pair(
     let page3 = resolve(&config.page_order.page3);
     let page4 = resolve(&config.page_order.page4);
 
-    // Step 2: OCR on page 1 ONLY — this is the only page with APPLICATION NO.
-    info!("  [3/4] Running OCR on page 1...");
-    let student_number = match extract_application_number(&page1, config) {
-        Ok(num) => {
-            info!("  [3/4] ✓ Student application number: {}", num);
-            num
-        }
-        Err(e) => {
-            let fallback = fallback_filename(file_a);
-            warn!("  [3/4] ⚠ OCR failed: {}", e);
-            warn!("  [3/4]    Cause may be:");
-            warn!("  [3/4]    1. TESSDATA_PREFIX not pointing to tessdata folder (check log above for 'TESSDATA_PREFIX =')");
-            warn!("  [3/4]    2. ROI coordinates are off — the number isn't in the cropped strip");
-            warn!(
-                "  [3/4]    3. eng.traineddata not installed: sudo apt install tesseract-ocr-eng"
-            );
-            warn!(
-                "  [3/4]    Page 1 dimensions: {}×{} px",
-                page1.width(),
-                page1.height()
-            );
-            warn!(
-                "  [3/4]    ROI config: y=[{:.1}%–{:.1}%]  x=[{:.1}%–{:.1}%]",
-                config.roi.y_start_frac * 100.0,
-                config.roi.y_end_frac * 100.0,
-                config.roi.x_start_frac * 100.0,
-                config.roi.x_end_frac * 100.0,
-            );
-            warn!("  [3/4] ⚠ Using fallback name: {}", fallback);
-            fallback
-        }
-    };
+    let output_name = file_name_from_path(file_a);
 
-    // Save ROI image
-    {
-        use crate::ocr::crop_roi;
-        let roi_pixels = config.roi.to_pixels(page1.width(), page1.height());
-        let roi_img = crop_roi(&page1, &roi_pixels);
-        let roi_path = config.output_dir.join(format!("{}.png", student_number));
-        if let Err(e) = roi_img.save(&roi_path) {
-            warn!("  [3/4]    ↳ Could not save ROI PNG: {}", e);
-        }
-    }
+    info!("  [3/4] Saving ROI screenshot...");
+    save_roi_screenshot(&page1, config, &output_name);
 
     // Step 3: Assemble the 4 pages into one output PDF
     info!("  [4/4] Assembling output PDF...");
-    let output_path = config.output_dir.join(format!("{}.pdf", student_number));
+    let output_path = config.output_dir.join(format!("{}.pdf", output_name));
 
     assemble_pdf(
         &[&page1, &page2, &page3, &page4],
@@ -142,7 +102,7 @@ pub fn process_pair(
 
     Ok(ProcessResult {
         output_path,
-        student_number,
+        output_name,
         file_a: file_a.to_path_buf(),
         file_b: file_b.to_path_buf(),
     })
@@ -284,15 +244,26 @@ fn encode_jpeg(img: &DynamicImage, quality: u8) -> anyhow::Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-fn fallback_filename(file_a: &Path) -> String {
-    let name = file_a
-        .file_name()
+fn file_name_from_path(file_a: &Path) -> String {
+    file_a
+        .file_stem()
         .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
+        .unwrap_or("output")
+        .to_string()
+}
 
-    if name.len() >= 9 {
-        name[3..9].to_string()
+fn save_roi_screenshot(page1: &DynamicImage, config: &Config, output_name: &str) {
+    let roi_pixels = config.roi.to_pixels(page1.width(), page1.height());
+    let roi_img = page1.crop_imm(
+        roi_pixels.x1,
+        roi_pixels.y1,
+        roi_pixels.width(),
+        roi_pixels.height(),
+    );
+    let roi_path = config.output_dir.join(format!("{}.png", output_name));
+    if let Err(e) = roi_img.save(&roi_path) {
+        warn!("  [3/4]    ↳ Could not save ROI PNG: {}", e);
     } else {
-        name.to_string()
+        info!("  [3/4] ✓ ROI screenshot: {}", roi_path.display());
     }
 }

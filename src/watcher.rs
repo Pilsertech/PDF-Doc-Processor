@@ -1,6 +1,5 @@
 use crossbeam_channel::{bounded, Receiver};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use pdfium_render::prelude::Pdfium;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -10,7 +9,6 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
-use crate::error::ProcessorError;
 use crate::processor::process_pair;
 use crate::splitter::init_pdfium;
 use crate::utils::{extract_counter, is_scan_file};
@@ -120,7 +118,22 @@ fn scan_and_process_existing(config: &Arc<Config>, pending: &PendingMap) {
         })
         .collect();
 
-    info!("Found {} scan files in startup", counter_map.len());
+    let total_files = counter_map.len();
+    info!("Found {} scan files in startup", total_files);
+
+    // Check if total file count is even (required for pairing)
+    if total_files % 2 != 0 {
+        error!(
+            "Total number of files ({}) is odd, cannot process in complete pairs. Stopping.",
+            total_files
+        );
+        return;
+    }
+
+    info!(
+        "Total file count is even ({}). Proceeding with pair processing.",
+        total_files
+    );
 
     // Sort counters for deterministic processing
     let mut sorted_counters: Vec<u32> = counter_map.keys().copied().collect();
@@ -128,128 +141,115 @@ fn scan_and_process_existing(config: &Arc<Config>, pending: &PendingMap) {
 
     let mut processed_in_startup = HashSet::new();
 
-    for counter in sorted_counters {
-        // Skip if already processed in this startup or already paired
-        if processed_in_startup.contains(&counter) || !counter_map.contains_key(&counter) {
+    // Process files in pairs from the top: (0,1), (2,3), (4,5), etc.
+    for chunk in sorted_counters.chunks(2) {
+        if chunk.len() < 2 {
+            // Should not happen due to even check above, but handle just in case
+            let counter = chunk[0];
+            let file_path = counter_map.get(&counter).unwrap();
+            warn!(
+                "Startup: unpaired file (counter {}) - {}",
+                counter,
+                file_path.file_name().unwrap_or_default().to_string_lossy()
+            );
             continue;
         }
 
-        // Try to find a pairing partner: counter±1
-        let partner_counter = if counter_map.contains_key(&(counter + 1)) {
-            Some(counter + 1)
-        } else if counter > 0 && counter_map.contains_key(&(counter - 1)) {
-            Some(counter - 1)
-        } else {
-            None
+        let counter_a = chunk[0];
+        let counter_b = chunk[1];
+
+        // Skip if already processed in this startup or already paired
+        if processed_in_startup.contains(&counter_a) || processed_in_startup.contains(&counter_b) {
+            continue;
+        }
+
+        // Check if this pair was already processed before
+        let pair_key = (counter_a.min(counter_b), counter_a.max(counter_b));
+
+        if processed_pairs.contains(&pair_key) {
+            info!(
+                "Startup: skipping already processed pair ({}, {}) - files will be ignored",
+                pair_key.0, pair_key.1
+            );
+            processed_in_startup.insert(counter_a);
+            processed_in_startup.insert(counter_b);
+            continue;
+        }
+
+        // Get full file paths
+        let file_a = counter_map.get(&counter_a).cloned();
+        let file_b = counter_map.get(&counter_b).cloned();
+
+        let (file_a, file_b) = match (file_a, file_b) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
         };
 
-        match partner_counter {
-            Some(partner) => {
-                // Check if this pair was already processed before
-                let pair_key = if counter < partner {
-                    (counter, partner)
-                } else {
-                    (partner, counter)
-                };
+        processed_in_startup.insert(counter_a);
+        processed_in_startup.insert(counter_b);
 
-                if processed_pairs.contains(&pair_key) {
-                    info!(
-                        "Startup: skipping already processed pair ({}, {}) - files will be ignored",
-                        pair_key.0, pair_key.1
-                    );
-                    counter_map.remove(&counter);
-                    counter_map.remove(&partner);
-                    processed_in_startup.insert(counter);
-                    processed_in_startup.insert(partner);
-                    continue;
+        info!(
+            "Startup: processing pair ({}, {}) - {} + {}",
+            counter_a,
+            counter_b,
+            file_a.file_name().unwrap_or_default().to_string_lossy(),
+            file_b.file_name().unwrap_or_default().to_string_lossy()
+        );
+
+        // Process the pair in a spawned thread
+        let config_clone = Arc::clone(&config);
+
+        thread::spawn(move || {
+            info!(
+                "⏳ Startup pair ({}, {}) - beginning processing...",
+                counter_a, counter_b
+            );
+
+            info!("  [Init] Loading PDFium library...");
+
+            let pdfium = match init_pdfium(&config_clone.pdfium_lib_path) {
+                Ok(p) => {
+                    info!("  [Init] ✓ PDFium loaded");
+                    p
                 }
+                Err(e) => {
+                    error!("  [Init] ✗ Failed to init pdfium: {}", e);
+                    return;
+                }
+            };
 
-                // We have a new pair to process
-                let file_a = counter_map.remove(&counter).unwrap();
-                let file_b = counter_map.remove(&partner).unwrap();
-                processed_in_startup.insert(counter);
-                processed_in_startup.insert(partner);
-
-                let (file_a, file_b, counter_a, counter_b) = if counter < partner {
-                    (file_a, file_b, counter, partner)
-                } else {
-                    (file_b, file_a, partner, counter)
-                };
-
-                info!(
-                    "Startup: processing complete pair ({}, {}) - {} + {}",
-                    counter_a,
-                    counter_b,
-                    file_a.file_name().unwrap_or_default().to_string_lossy(),
-                    file_b.file_name().unwrap_or_default().to_string_lossy()
-                );
-
-                // Process the pair in a spawned thread
-                let config_clone = Arc::clone(&config);
-
-                thread::spawn(move || {
+            match process_pair(&file_a, &file_b, &config_clone, &pdfium) {
+                Ok(result) => {
+                    save_processed_pair(&config_clone, counter_a, counter_b);
                     info!(
-                        "⏳ Startup pair ({}, {}) - beginning processing...",
-                        counter_a, counter_b
+                        "✓ Startup pair ({}, {}) → {}",
+                        counter_a,
+                        counter_b,
+                        result
+                            .output_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
                     );
-
-                    // Set TESSDATA_PREFIX to the tessdata directory itself.
-                    // config.tessdata_path already points to the tessdata folder
-                    // (e.g. /usr/share/tessdata), so use it directly — NOT .parent(),
-                    // which would give /usr/share and cause "eng.traineddata not found".
-                    std::env::set_var(
-                        "TESSDATA_PREFIX",
-                        config_clone.tessdata_path.to_string_lossy().as_ref(),
+                }
+                Err(e) => {
+                    error!(
+                        "✗ Startup pair ({}, {}) failed: {}",
+                        counter_a, counter_b, e
                     );
-                    info!(
-                        "  [Init] TESSDATA_PREFIX = {}",
-                        config_clone.tessdata_path.display()
-                    );
-
-                    info!("  [Init] Loading PDFium library...");
-
-                    let pdfium = match init_pdfium(&config_clone.pdfium_lib_path) {
-                        Ok(p) => {
-                            info!("  [Init] ✓ PDFium loaded");
-                            p
-                        }
-                        Err(e) => {
-                            error!("  [Init] ✗ Failed to init pdfium: {}", e);
-                            return;
-                        }
-                    };
-
-                    match process_pair(&file_a, &file_b, &config_clone, &pdfium) {
-                        Ok(result) => {
-                            save_processed_pair(&config_clone, counter_a, counter_b);
-                            info!(
-                                "✓ Startup pair ({}, {}) → {} (student: {})",
-                                counter_a,
-                                counter_b,
-                                result
-                                    .output_path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                result.student_number,
-                            );
-                        }
-                        Err(e) => {
-                            error!(
-                                "✗ Startup pair ({}, {}) failed: {}",
-                                counter_a, counter_b, e
-                            );
-                        }
-                    }
-                });
+                }
             }
-            None => {
-                // No partner found yet - add to pending so watcher can match it later
-                let file_path = counter_map.remove(&counter).unwrap();
+        });
+    }
+
+    // Add any remaining unprocessed files to pending (for watcher to handle later)
+    for counter in &sorted_counters {
+        if !processed_in_startup.contains(counter) {
+            if let Some(file_path) = counter_map.get(counter) {
                 let mut pending_map = pending.lock().unwrap();
-                pending_map.insert(counter, file_path.clone());
+                pending_map.insert(*counter, file_path.clone());
                 info!(
-                    "Startup: incomplete pair ({}) waiting for partner in pending - {}",
+                    "Startup: file (counter {}) added to pending - {}",
                     counter,
                     file_path.file_name().unwrap_or_default().to_string_lossy()
                 );
@@ -333,7 +333,7 @@ fn start_watcher(
     Ok(watcher)
 }
 
-/// Main event loop: receive file paths, match pairs, spawn processing threads.
+/// Main event loop: receive file paths, pair sequentially (first file waits for second file), spawn processing threads.
 fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config>) {
     let processed_pairs = Arc::new(Mutex::new(load_processed_pairs(&config)));
 
@@ -356,34 +356,79 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
             let mut pending_map = pending.lock().unwrap();
             let processed = processed_pairs.lock().unwrap();
 
-            // Try to find a partner: look for counter-1 OR counter+1.
-            // IMPORTANT: use checked subtraction — counter is u32 and could be 0,
-            // causing a panic (debug) or wrap-around (release) without the guard.
-            let partner_result: Option<(u32, PathBuf, PathBuf)> = if counter > 0 {
-                if let Some(partner_path) = pending_map.remove(&(counter - 1)) {
-                    // Current file has the HIGHER counter → it is file_B; partner is file_A
+            // Simple queue-based pairing: if there's a waiting file, pair with it
+            // No checking of counter numbers - just pair any two files together
+            if let Some((waiting_counter, waiting_path)) =
+                pending_map.iter().next().map(|(k, v)| (*k, v.clone()))
+            {
+                pending_map.remove(&waiting_counter);
+
+                // Pair: file_a is the waiting file, file_b is the new file
+                let file_a = waiting_path;
+                let file_b = path.clone();
+                let counter_a = waiting_counter;
+                let counter_b = counter;
+
+                let pair_key = (counter_a.min(counter_b), counter_a.max(counter_b));
+
+                if processed.contains(&pair_key) {
+                    info!(
+                        "Watcher: pair ({}, {}) already processed, ignoring - {} + {}",
+                        pair_key.0,
+                        pair_key.1,
+                        file_a.file_name().unwrap_or_default().to_string_lossy(),
+                        file_b.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    None
+                } else {
+                    info!(
+                        "Watcher: matched pair ({}, {}) - {} + {}",
+                        pair_key.0,
+                        pair_key.1,
+                        file_a.file_name().unwrap_or_default().to_string_lossy(),
+                        file_b.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    Some((file_a, file_b, pair_key.0, pair_key.1))
+                }
+            } else {
+                // No file waiting - add to pending
+                pending_map.insert(counter, path.clone());
+                info!(
+                    "Watcher: waiting for pair of {} (counter={})",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    counter
+                );
+                None
+            }
+        };
+
+        debug!(
+            "Watcher event: file counter={} path={}",
+            counter,
+            path.display()
+        );
+
+        let pair = {
+            let mut pending_map = pending.lock().unwrap();
+            let processed = processed_pairs.lock().unwrap();
+
+            // Sequential pairing: first look for counter-1 (previous file), then counter+1
+            let partner_result: Option<(u32, PathBuf, PathBuf)> =
+                if counter > 0 && pending_map.contains_key(&(counter - 1)) {
+                    // Current file is the HIGHER counter → it's file_B; partner (counter-1) is file_A
+                    let partner_path = pending_map.remove(&(counter - 1)).unwrap();
                     Some((counter - 1, partner_path, path.clone()))
                 } else if let Some(partner_path) = pending_map.remove(&(counter + 1)) {
-                    // Current file has the LOWER counter → it is file_A; partner is file_B
+                    // Current file is the LOWER counter → it's file_A; partner (counter+1) is file_B
                     Some((counter + 1, path.clone(), partner_path))
                 } else {
                     None
-                }
-            } else {
-                // counter == 0: can only have a partner at counter+1
-                pending_map
-                    .remove(&(counter + 1))
-                    .map(|partner_path| (counter + 1, path.clone(), partner_path))
-            };
+                };
 
             match partner_result {
                 Some((partner, file_a, file_b)) => {
                     // pair_key is always (lower, higher)
-                    let pair_key = if counter < partner {
-                        (counter, partner)
-                    } else {
-                        (partner, counter)
-                    };
+                    let pair_key = (partner.min(counter), partner.max(counter));
 
                     if processed.contains(&pair_key) {
                         info!(
@@ -409,10 +454,9 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
                     // No match yet — park in pending map
                     pending_map.insert(counter, path.clone());
                     info!(
-                        "Watcher: waiting for pair of {} (counter={}) - looking for counter {} or {}",
+                        "Watcher: waiting for pair of {} (counter={}) - looking for counter {}",
                         path.file_name().unwrap_or_default().to_string_lossy(),
                         counter,
-                        if counter > 0 { counter - 1 } else { 0 },
                         counter + 1
                     );
                     None
@@ -429,18 +473,6 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
                 info!(
                     "⏳ Watcher pair ({}, {}) - beginning processing...",
                     counter_a, counter_b
-                );
-
-                // Set TESSDATA_PREFIX to the tessdata directory itself.
-                // config.tessdata_path already points to the tessdata folder
-                // (e.g. /usr/share/tessdata), so use it directly — NOT .parent().
-                std::env::set_var(
-                    "TESSDATA_PREFIX",
-                    config.tessdata_path.to_string_lossy().as_ref(),
-                );
-                info!(
-                    "  [Init] TESSDATA_PREFIX = {}",
-                    config.tessdata_path.display()
                 );
 
                 info!("  [Init] Loading PDFium library...");
@@ -464,7 +496,7 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
                             .unwrap()
                             .insert((counter_a, counter_b));
                         info!(
-                            "✓ Processed pair ({}, {}) → {} (student: {})",
+                            "✓ Processed pair ({}, {}) → {}",
                             counter_a,
                             counter_b,
                             result
@@ -472,7 +504,6 @@ fn run_event_loop(rx: Receiver<PathBuf>, pending: PendingMap, config: Arc<Config
                                 .file_name()
                                 .unwrap_or_default()
                                 .to_string_lossy(),
-                            result.student_number,
                         );
                     }
                     Err(e) => {

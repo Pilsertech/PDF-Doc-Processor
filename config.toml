@@ -2,7 +2,6 @@
 watch_dir = "./input"
 output_dir = "./output"
 dpi = 300
-tessdata = "/usr/share/tesseract-ocr/5/tessdata"
 pdfium_lib = "/home/pilser/Nyunga-Foundation-Data-Processing/Rust-Intergration/Docs/libpdfium.so"
 library_path = "/home/pilser/Nyunga-Foundation-Data-Processing/PDF-Doc-Processor/Docs"
 
@@ -10,18 +9,11 @@ library_path = "/home/pilser/Nyunga-Foundation-Data-Processing/PDF-Doc-Processor
 # Recommended: 60-80 for smaller files, 90 for high quality
 jpeg_quality = 70
 
-
-[environment]
-# Environment variables to set before running
-TESSDATA_PREFIX = "/usr/share/tesseract-ocr/5/tessdata"
-
 [roi]
 y_start = 0.295
 y_end   = 0.360
 x_start = 0.240
 x_end   = 0.700
-[debug]
-debug_roi = true
 
 
 # Page order — controls which A3 half becomes which output page.
@@ -33,7 +25,7 @@ debug_roi = true
 #   3. Swap the relevant entries below and rerun — no recompile needed
 #
 # Standard layout (correct for most scanners):
-#   page1 = "A_right"   <- form front with APPLICATION NO. (OCR runs here)
+#   page1 = "A_right"   <- form front page
 #   page2 = "B_right"
 #   page3 = "B_left"
 #   page4 = "A_left"    <- declaration / back page

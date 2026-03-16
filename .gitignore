@@ -1,3 +1,6 @@
 /target
 /Docs
 scanner_processor
+node_modules/
+.env
+dist/

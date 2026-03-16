@@ -14,17 +14,11 @@ pdfium-render = { version = "0.8", features = ["image"] }
 # Image processing: crop, split, resize, save
 image = "0.25"
 
-# OCR via Tesseract bindings
-leptess = "0.14"
-
 # File watching (better than Python watchdog)
 notify = { version = "6", features = ["macos_fsevent"] }
 
 # PDF assembly output (write multi-page PDFs)
 lopdf = "0.34"
-
-# Regex for student number extraction
-regex = "1"
 
 # Async runtime + threading
 tokio = { version = "1", features = ["full"] }

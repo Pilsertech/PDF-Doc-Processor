@@ -1,0 +1,19 @@
+{
+  "name": "pdf-number-extractor",
+  "version": "1.0.0",
+  "description": "Extract numbers from PNG images using xAI API and rename corresponding PDFs",
+  "main": "src/extract-number.ts",
+  "scripts": {
+    "start": "bun src/extract-number.ts",
+    "extract": "bun src/extract-number.ts",
+    "build": "bun build src/extract-number.ts --compile --outfile pdf-extractor"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "openai": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
